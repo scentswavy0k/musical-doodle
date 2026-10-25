@@ -16,10 +16,16 @@ response = requests.get(url, headers=headers)
 soup = BeautifulSoup(response.content, "html.parser")
 html_text = response.text
 
-# --- 1. Агрегированные данные из JSON-LD (средний рейтинг и общее число) ---
+now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+def to_num(val):
+    if val is None:
+        return ""
+    return float(val) if "." in val else int(val)
+
+# ---------- 1. Основной рейтинг Литрес ----------
 rating_value = None
 review_count = None
-
 for script in soup.find_all("script", type="application/ld+json"):
     try:
         data = json.loads(script.string)
@@ -32,20 +38,10 @@ for script in soup.find_all("script", type="application/ld+json"):
         if review_count:
             break
 
-# --- 2. Детальная разбивка по звёздам из встроенного JSON ---
-# Ключи вида rated_N_count встречаются только в сериализованных данных Next.js,
-# где кавычки экранированы как \" — поэтому допускаем любые комбинации
-# кавычек, обратных слэшей и пробелов вокруг двоеточия.
-
 def extract_value(key):
-    """Находит значение по ключу, допуская экранированные/неэкранированные кавычки."""
+    """Значение по ключу с допуском экранированных кавычек (\"key\":...)."""
     m = re.search(rf'{key}[\\"\' ]*:[\\"\' ]*([\d.]+)', html_text)
     return m.group(1) if m else None
-
-def to_num(val):
-    if val is None:
-        return ""
-    return float(val) if "." in val else int(val)
 
 star_1 = to_num(extract_value("rated_1_count"))
 star_2 = to_num(extract_value("rated_2_count"))
@@ -54,18 +50,6 @@ star_4 = to_num(extract_value("rated_4_count"))
 star_5 = to_num(extract_value("rated_5_count"))
 rated_avg = to_num(extract_value("rated_avg"))
 rated_total = to_num(extract_value("rated_total_count"))
-
-# Диагностика: если разбивка не нашлась, покажем кусочек ответа вокруг ключа
-if star_1 == "":
-    idx = html_text.find("rated_1_count")
-    if idx >= 0:
-        print(f"[DEBUG] 'rated_1_count' найден на позиции {idx}, контекст: "
-              f"{html_text[max(0, idx-40):idx+80]!r}")
-    else:
-        print("[DEBUG] 'rated_1_count' вообще не найден в ответе")
-
-# --- 3. Запись в CSV ---
-now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
 with open("data.csv", "w", newline="", encoding="utf-8") as f:
     writer = csv.writer(f)
@@ -83,6 +67,51 @@ with open("data.csv", "w", newline="", encoding="utf-8") as f:
         rated_avg, rated_total
     ])
 
-print(f"Сохранено: avg={rating_value}, count={review_count}, "
+print(f"data.csv: avg={rating_value}, count={review_count}, "
       f"stars=({star_1},{star_2},{star_3},{star_4},{star_5}), "
       f"rated_avg={rated_avg}, total={rated_total}")
+
+# ---------- 2. Рейтинг LiveLib ----------
+def extract_livelib_value(key):
+    """
+    Ищет значение по ключу ТОЛЬКО внутри блока livelib_ratings:{...}.
+    Это защищает от путаницы с rated_N_count основного рейтинга.
+    """
+    pattern = rf'livelib_ratings[\\"\' ]*:[\\"\' ]*\{{[^}}]*?{key}[\\"\' ]*:[\\"\' ]*([\d.]+)'
+    m = re.search(pattern, html_text)
+    return m.group(1) if m else None
+
+# Эти два ключа уникальны, но для единообразия используем тот же стиль
+livelib_avg = to_num(extract_value("livelib_rated_avg"))
+livelib_total = to_num(extract_value("livelib_rated_count"))
+
+livelib_1 = to_num(extract_livelib_value("rating_1_count"))
+livelib_2 = to_num(extract_livelib_value("rating_2_count"))
+livelib_3 = to_num(extract_livelib_value("rating_3_count"))
+livelib_4 = to_num(extract_livelib_value("rating_4_count"))
+livelib_5 = to_num(extract_livelib_value("rating_5_count"))
+
+# Диагностика
+if livelib_total == "":
+    idx = html_text.find("livelib_rated_count")
+    if idx >= 0:
+        print(f"[DEBUG] livelib_rated_count найден на позиции {idx}: "
+              f"{html_text[max(0, idx-40):idx+120]!r}")
+    else:
+        print("[DEBUG] livelib_rated_count не найден в ответе")
+
+with open("data2.csv", "w", newline="", encoding="utf-8") as f:
+    writer = csv.writer(f)
+    writer.writerow([
+        "datetime",
+        "livelib_avg", "livelib_total",
+        "1_star", "2_star", "3_star", "4_star", "5_star"
+    ])
+    writer.writerow([
+        now,
+        livelib_avg, livelib_total,
+        livelib_1, livelib_2, livelib_3, livelib_4, livelib_5
+    ])
+
+print(f"data2.csv (LiveLib): avg={livelib_avg}, total={livelib_total}, "
+      f"stars=({livelib_1},{livelib_2},{livelib_3},{livelib_4},{livelib_5})")
