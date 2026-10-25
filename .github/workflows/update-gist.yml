@@ -2,19 +2,18 @@ name: Update Daily Gist
 
 on:
   schedule:
-    # Запуск каждый день в 03:00 UTC (настройте под свой часовой пояс)
     - cron: '0 3 * * *'
-  workflow_dispatch: # Позволяет запускать вручную для теста
+  workflow_dispatch:
 
 jobs:
   update-gist:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Явно закрепляем стабильную версию ОС
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 # Обновлено для Node.js 24
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6 # Обновлено для Node.js 24
         with:
           python-version: '3.11'
 
@@ -27,9 +26,9 @@ jobs:
         run: python parser.py
 
       - name: Deploy to Gist
-        uses: exuanbo/actions-deploy-gist@v1
+        uses: exuanbo/actions-deploy-gist@v1 # Пока оставляем, но помним о риске
         with:
           token: ${{ secrets.GIST_TOKEN }}
           gist_id: ${{ secrets.GIST_ID }}
-          file_path: data.csv          # Файл, созданный скриптом
-          gist_file_name: data.csv     # Имя файла в Gist (должно совпадать с тем, что вы создали)
+          file_path: data.csv
+          gist_file_name: data.csv
