@@ -14,13 +14,17 @@ headers = {
 
 response = requests.get(url, headers=headers)
 soup = BeautifulSoup(response.content, "html.parser")
+html_text = response.text
 
 # --- 1. Агрегированные данные из JSON-LD (средний рейтинг и общее число) ---
 rating_value = None
 review_count = None
 
 for script in soup.find_all("script", type="application/ld+json"):
-    data = json.loads(script.string)
+    try:
+        data = json.loads(script.string)
+    except (json.JSONDecodeError, TypeError):
+        continue
     if data.get("@type") in ["Book", "Product"]:
         aggregate_rating = data.get("aggregateRating", {})
         rating_value = aggregate_rating.get("ratingValue")
@@ -29,31 +33,36 @@ for script in soup.find_all("script", type="application/ld+json"):
             break
 
 # --- 2. Детальная разбивка по звёздам из встроенного JSON ---
-# Ищем объект вида: "rating":{"user_rating":null,"rated_1_count":0,...}
-pattern = (
-    r'"rating":\{"user_rating":(?:null|\d+),'
-    r'"rated_1_count":(\d+),'
-    r'"rated_2_count":(\d+),'
-    r'"rated_3_count":(\d+),'
-    r'"rated_4_count":(\d+),'
-    r'"rated_5_count":(\d+),'
-    r'"rated_avg":([\d.]+),'
-    r'"rated_total_count":(\d+)\}'
-)
-match = re.search(pattern, response.text)
+# Ключи вида rated_N_count встречаются только в сериализованных данных Next.js,
+# где кавычки экранированы как \" — поэтому допускаем любые комбинации
+# кавычек, обратных слэшей и пробелов вокруг двоеточия.
 
-if match:
-    star_1 = int(match.group(1))
-    star_2 = int(match.group(2))
-    star_3 = int(match.group(3))
-    star_4 = int(match.group(4))
-    star_5 = int(match.group(5))
-    rated_avg = float(match.group(6))
-    rated_total = int(match.group(7))
-else:
-    # Если разбивка не найдена (например, изменилась верстка) — пишем пустые значения
-    star_1 = star_2 = star_3 = star_4 = star_5 = ""
-    rated_avg = rated_total = ""
+def extract_value(key):
+    """Находит значение по ключу, допуская экранированные/неэкранированные кавычки."""
+    m = re.search(rf'{key}[\\"\' ]*:[\\"\' ]*([\d.]+)', html_text)
+    return m.group(1) if m else None
+
+def to_num(val):
+    if val is None:
+        return ""
+    return float(val) if "." in val else int(val)
+
+star_1 = to_num(extract_value("rated_1_count"))
+star_2 = to_num(extract_value("rated_2_count"))
+star_3 = to_num(extract_value("rated_3_count"))
+star_4 = to_num(extract_value("rated_4_count"))
+star_5 = to_num(extract_value("rated_5_count"))
+rated_avg = to_num(extract_value("rated_avg"))
+rated_total = to_num(extract_value("rated_total_count"))
+
+# Диагностика: если разбивка не нашлась, покажем кусочек ответа вокруг ключа
+if star_1 == "":
+    idx = html_text.find("rated_1_count")
+    if idx >= 0:
+        print(f"[DEBUG] 'rated_1_count' найден на позиции {idx}, контекст: "
+              f"{html_text[max(0, idx-40):idx+80]!r}")
+    else:
+        print("[DEBUG] 'rated_1_count' вообще не найден в ответе")
 
 # --- 3. Запись в CSV ---
 now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -68,11 +77,12 @@ with open("data.csv", "w", newline="", encoding="utf-8") as f:
     ])
     writer.writerow([
         now,
-        rating_value, review_count,
+        rating_value if rating_value is not None else "",
+        review_count if review_count is not None else "",
         star_1, star_2, star_3, star_4, star_5,
         rated_avg, rated_total
     ])
 
 print(f"Сохранено: avg={rating_value}, count={review_count}, "
-      f"разбивка=({star_1},{star_2},{star_3},{star_4},{star_5}), "
+      f"stars=({star_1},{star_2},{star_3},{star_4},{star_5}), "
       f"rated_avg={rated_avg}, total={rated_total}")
