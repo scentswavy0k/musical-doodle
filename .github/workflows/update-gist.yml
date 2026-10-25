@@ -23,6 +23,9 @@ jobs:
           pip install requests beautifulsoup4
 
       - name: Run parsing script
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
         run: python parser.py
 
       - name: Deploy data.csv to Gist
