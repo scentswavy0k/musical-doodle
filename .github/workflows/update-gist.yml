@@ -1,0 +1,35 @@
+name: Update Daily Gist
+
+on:
+  schedule:
+    # Запуск каждый день в 03:00 UTC (настройте под свой часовой пояс)
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Позволяет запускать вручную для теста
+
+jobs:
+  update-gist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Run parsing script
+        run: python parser.py
+
+      - name: Deploy to Gist
+        uses: exuanbo/actions-deploy-gist@v1
+        with:
+          token: ${{ secrets.GIST_TOKEN }}
+          gist_id: ${{ secrets.GIST_ID }}
+          file_path: data.csv          # Файл, созданный скриптом
+          gist_file_name: data.csv     # Имя файла в Gist (должно совпадать с тем, что вы создали)
