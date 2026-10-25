@@ -7,13 +7,13 @@ on:
 
 jobs:
   update-gist:
-    runs-on: ubuntu-24.04 # Явно закрепляем стабильную версию ОС
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5 # Обновлено для Node.js 24
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6 # Обновлено для Node.js 24
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -25,10 +25,18 @@ jobs:
       - name: Run parsing script
         run: python parser.py
 
-      - name: Deploy to Gist
-        uses: exuanbo/actions-deploy-gist@v1 # Пока оставляем, но помним о риске
+      - name: Deploy data.csv to Gist
+        uses: exuanbo/actions-deploy-gist@v1
         with:
           token: ${{ secrets.GIST_TOKEN }}
           gist_id: ${{ secrets.GIST_ID }}
           file_path: data.csv
           gist_file_name: data.csv
+
+      - name: Deploy data2.csv to Gist
+        uses: exuanbo/actions-deploy-gist@v1
+        with:
+          token: ${{ secrets.GIST_TOKEN }}
+          gist_id: ${{ secrets.GIST_ID }}
+          file_path: data2.csv
+          gist_file_name: data2.csv
