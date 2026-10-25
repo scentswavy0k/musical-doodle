@@ -1,44 +1,35 @@
-import requests
-from bs4 import BeautifulSoup
-import json
-import csv
-from datetime import datetime
+name: Update Daily Gist
 
-url = "https://www.litres.com/book/edvard-monk/sneg-73795536/"
+on:
+  schedule:
+    # Запуск каждый день в 03:00 UTC (настройте под свой часовой пояс)
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Позволяет запускать вручную для теста
 
-# Добавляем User-Agent, чтобы сайт не считал нас ботом
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+jobs:
+  update-gist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-response = requests.get(url, headers=headers)
-soup = BeautifulSoup(response.content, "html.parser")
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-rating_count = None
-rating_value = None
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
 
-# Находим все блоки JSON-LD
-for script in soup.find_all("script", type="application/ld+json"):
-    data = json.loads(script.string)
-    # Проверяем, что это нужный нам тип (Book или Product)
-    if data.get("@type") in ["Book", "Product"]:
-        aggregate_rating = data.get("aggregateRating", {})
-        rating_count = aggregate_rating.get("reviewCount")
-        rating_value = aggregate_rating.get("ratingValue")
-        if rating_count:
-            break
+      - name: Run parsing script
+        run: python parser.py
 
-# Формируем строку CSV
-now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-
-with open("data.csv", "w", newline="", encoding="utf-8") as f:
-    writer = csv.writer(f)
-    writer.writerow(["datetime", "rating_value", "review_count"])
-    if rating_count:
-        writer.writerow([now, rating_value, rating_count])
-    else:
-        writer.writerow([now, "", ""])
-        print("Не удалось найти количество оценок.")
-
-print(f"Данные сохранены в data.csv: {now}, рейтинг={rating_value}, оценок={rating_count}")
+      - name: Deploy to Gist
+        uses: exuanbo/actions-deploy-gist@v1
+        with:
+          token: ${{ secrets.GIST_TOKEN }}
+          gist_id: ${{ secrets.GIST_ID }}
+          file_path: data.csv          # Файл, созданный скриптом
+          gist_file_name: data.csv     # Имя файла в Gist (должно совпадать с тем, что вы создали)
