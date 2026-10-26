@@ -7,7 +7,7 @@ import io
 import os
 from datetime import datetime
 
-url = "https://www.litres.com/book/edvard-monk/sneg-73795536/"
+url = "https://www.litres.ru/book/73795536/"
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -16,13 +16,13 @@ headers = {
 response = requests.get(url, headers=headers)
 soup = BeautifulSoup(response.content, "html.parser")
 html_text = response.text
-now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+today = datetime.utcnow().strftime("%Y-%m-%d")   # только дата, без времени
 
 
 def to_num(val):
     if val is None:
         return ""
-    return float(val) if "." in val else int(val)
+    return float(val) if "." in str(val) else int(val)
 
 
 def extract_value(key):
@@ -38,37 +38,46 @@ def extract_livelib_value(key):
     return m.group(1) if m else None
 
 
-# ---------- Парсинг ----------
+# ---------- 1. JSON-LD: рейтинг и цена ----------
 rating_value = None
+price_raw = None
+
 for script in soup.find_all("script", type="application/ld+json"):
     try:
         data = json.loads(script.string)
     except (json.JSONDecodeError, TypeError):
         continue
-    if data.get("@type") in ["Book", "Product"]:
+    if data.get("@type") == "Book":
         rating_value = data.get("aggregateRating", {}).get("ratingValue")
-        if rating_value:
-            break
+        offers = data.get("offers", {})
+        if isinstance(offers, list) and offers:
+            offers = offers[0]
+        if isinstance(offers, dict):
+            price_raw = offers.get("price")
+        break   # Book JSON-LD содержит и рейтинг, и цену
 
-reviews_count = to_num(extract_value("reviews_count"))  # отзывы (16)
-star_1 = to_num(extract_value("rated_1_count"))
-star_2 = to_num(extract_value("rated_2_count"))
-star_3 = to_num(extract_value("rated_3_count"))
-star_4 = to_num(extract_value("rated_4_count"))
-star_5 = to_num(extract_value("rated_5_count"))
-rated_avg = to_num(extract_value("rated_avg"))
-rated_total = to_num(extract_value("rated_total_count"))
+price = to_num(str(price_raw)) if price_raw is not None else ""
 
-livelib_avg = to_num(extract_value("livelib_rated_avg"))
+# ---------- 2. Детальные данные из встроенного JSON ----------
+reviews_count = to_num(extract_value("reviews_count"))     # 16 — количество отзывов
+star_1        = to_num(extract_value("rated_1_count"))
+star_2        = to_num(extract_value("rated_2_count"))
+star_3        = to_num(extract_value("rated_3_count"))
+star_4        = to_num(extract_value("rated_4_count"))
+star_5        = to_num(extract_value("rated_5_count"))
+rated_avg     = to_num(extract_value("rated_avg"))
+rated_total   = to_num(extract_value("rated_total_count"))  # 22 — количество оценок
+
+livelib_avg   = to_num(extract_value("livelib_rated_avg"))
 livelib_total = to_num(extract_value("livelib_rated_count"))
-livelib_1 = to_num(extract_livelib_value("rating_1_count"))
-livelib_2 = to_num(extract_livelib_value("rating_2_count"))
-livelib_3 = to_num(extract_livelib_value("rating_3_count"))
-livelib_4 = to_num(extract_livelib_value("rating_4_count"))
-livelib_5 = to_num(extract_livelib_value("rating_5_count"))
+livelib_1     = to_num(extract_livelib_value("rating_1_count"))
+livelib_2     = to_num(extract_livelib_value("rating_2_count"))
+livelib_3     = to_num(extract_livelib_value("rating_3_count"))
+livelib_4     = to_num(extract_livelib_value("rating_4_count"))
+livelib_5     = to_num(extract_livelib_value("rating_5_count"))
 
 
-# ---------- Чтение Gist + накопление ----------
+# ---------- 3. Чтение Gist + накопление ----------
 def fetch_gist_file(gist_id, filename, token):
     api_url = f"https://api.github.com/gists/{gist_id}"
     r = requests.get(api_url, headers={
@@ -82,7 +91,7 @@ def fetch_gist_file(gist_id, filename, token):
     return files.get(filename, {}).get("content", "") or ""
 
 
-def append_to_csv(local_path, header, new_row, gist_id, filename, token):
+def append_or_replace(local_path, header, new_row, gist_id, filename, token):
     existing = fetch_gist_file(gist_id, filename, token) if token and gist_id else ""
 
     if existing.strip():
@@ -93,33 +102,38 @@ def append_to_csv(local_path, header, new_row, gist_id, filename, token):
     else:
         rows = [header]
 
-    rows.append(new_row)
+    # Если последняя строка уже за сегодня — заменяем её, а не дублируем
+    if len(rows) > 1 and rows[-1][0] == new_row[0]:
+        rows[-1] = new_row
+        print(f"{local_path}: заменена строка за {new_row[0]}")
+    else:
+        rows.append(new_row)
+        print(f"{local_path}: добавлена строка за {new_row[0]} (всего: {len(rows)-1})")
 
     with open(local_path, "w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerows(rows)
 
-    print(f"{local_path}: {len(rows) - 1} строк(и), добавлена строка {new_row[0]}")
 
-
-# ---------- Запись ----------
+# ---------- 4. Запись ----------
 GIST_TOKEN = os.environ.get("GIST_TOKEN", "")
 GIST_ID = os.environ.get("GIST_ID", "")
 
-header1 = ["datetime", "rating_value", "review_count",
-           "1_star", "2_star", "3_star", "4_star", "5_star",
-           "rated_avg", "rated_total"]
-row1 = [now, rating_value or "", reviews_count,
-        star_1, star_2, star_3, star_4, star_5, rated_avg, rated_total]
-append_to_csv("data.csv", header1, row1, GIST_ID, "data.csv", GIST_TOKEN)
+header1 = ["datetime", "price", "review_count",
+           "rated_total", "rating_value", "rated_avg",
+           "1_star", "2_star", "3_star", "4_star", "5_star"]
+row1 = [today, price, reviews_count,
+        rated_total, rating_value if rating_value is not None else "", rated_avg,
+        star_1, star_2, star_3, star_4, star_5]
+append_or_replace("data.csv", header1, row1, GIST_ID, "data.csv", GIST_TOKEN)
 
 header2 = ["datetime", "livelib_avg", "livelib_total",
            "1_star", "2_star", "3_star", "4_star", "5_star"]
-row2 = [now, livelib_avg, livelib_total,
+row2 = [today, livelib_avg, livelib_total,
         livelib_1, livelib_2, livelib_3, livelib_4, livelib_5]
-append_to_csv("data2.csv", header2, row2, GIST_ID, "data2.csv", GIST_TOKEN)
+append_or_replace("data2.csv", header2, row2, GIST_ID, "data2.csv", GIST_TOKEN)
 
-print(f"data.csv: rating={rating_value}, reviews={reviews_count}, "
-      f"stars=({star_1},{star_2},{star_3},{star_4},{star_5}), "
-      f"rated_avg={rated_avg}, rated_total={rated_total}")
-print(f"data2.csv (LiveLib): avg={livelib_avg}, total={livelib_total}, "
+print(f"data.csv: {today}, price={price}, reviews={reviews_count}, "
+      f"rated_total={rated_total}, rating={rating_value}, rated_avg={rated_avg}, "
+      f"stars=({star_1},{star_2},{star_3},{star_4},{star_5})")
+print(f"data2.csv: {today}, avg={livelib_avg}, total={livelib_total}, "
       f"stars=({livelib_1},{livelib_2},{livelib_3},{livelib_4},{livelib_5})")
