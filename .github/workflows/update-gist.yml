@@ -2,7 +2,7 @@ name: Update Daily Gist
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -43,3 +43,26 @@ jobs:
           gist_id: ${{ secrets.GIST_ID }}
           file_path: data2.csv
           gist_file_name: data2.csv
+
+      - name: Send CSV files to Telegram
+        env:
+          TGBOT_TOKEN: ${{ secrets.TGBOT_TOKEN }}
+          TGBOT_CHATID: ${{ secrets.TGBOT_CHATID }}
+          TGBOT_THREAD: ${{ secrets.TGBOT_THREAD }}
+        run: |
+          TODAY=$(date -u '+%Y-%m-%d')
+
+          # Если топик не задан — не передаём message_thread_id
+          THREAD_OPT=()
+          if [ -n "${TGBOT_THREAD}" ]; then
+            THREAD_OPT=(-F "message_thread_id=${TGBOT_THREAD}")
+          fi
+
+          curl --fail-with-body -sS \
+            -F "chat_id=${TGBOT_CHATID}" \
+            "${THREAD_OPT[@]}" \
+            -F 'media=[{"type": "document", "media": "attach://file1", "caption": "Отчет за '"${TODAY}"'"}, {"type": "document", "media": "attach://file2"}]' \
+            -F "file1=@data.csv" \
+            -F "file2=@data2.csv" \
+            "https://api.telegram.org/bot${TGBOT_TOKEN}/sendMediaGroup" \
+            || echo "::warning::Не удалось отправить файлы в Telegram — данные уже в Gist, некритично"
