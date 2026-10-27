@@ -43,7 +43,7 @@ def fetch(url, timeout=15):
 # LITRES + LIVELIB
 # ============================================================
 def extract_value(key, text, nested=False):
-    prefix = r'livelib_ratings[\\"\' ]*:[\\"\' ]*\{{[^}}]*?' if nested else ''
+    prefix = r'livelib_ratings[\\"\' ]*:[\\"\' ]*\{[^}]*?' if nested else ''
     m = re.search(rf'{prefix}{key}[\\"\' ]*:[\\"\' ]*([\d.]+)', text)
     return m.group(1) if m else None
 
