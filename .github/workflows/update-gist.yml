@@ -28,21 +28,21 @@ jobs:
           GIST_ID: ${{ secrets.GIST_ID }}
         run: python parser.py
 
-      - name: Deploy data.csv to Gist
+      - name: Deploy litres.csv to Gist
         uses: exuanbo/actions-deploy-gist@v1
         with:
           token: ${{ secrets.GIST_TOKEN }}
           gist_id: ${{ secrets.GIST_ID }}
-          file_path: data.csv
-          gist_file_name: data.csv
+          file_path: litres.csv
+          gist_file_name: litres.csv
 
-      - name: Deploy data2.csv to Gist
+      - name: Deploy livelib.csv to Gist
         uses: exuanbo/actions-deploy-gist@v1
         with:
           token: ${{ secrets.GIST_TOKEN }}
           gist_id: ${{ secrets.GIST_ID }}
-          file_path: data2.csv
-          gist_file_name: data2.csv
+          file_path: livelib.csv
+          gist_file_name: livelib.csv
 
       - name: Send CSV files to Telegram
         env:
@@ -52,7 +52,6 @@ jobs:
         run: |
           TODAY=$(date -u '+%Y-%m-%d')
 
-          # Если топик не задан — не передаём message_thread_id
           THREAD_OPT=()
           if [ -n "${TGBOT_THREAD}" ]; then
             THREAD_OPT=(-F "message_thread_id=${TGBOT_THREAD}")
@@ -61,8 +60,8 @@ jobs:
           curl --fail-with-body -sS \
             -F "chat_id=${TGBOT_CHATID}" \
             "${THREAD_OPT[@]}" \
-            -F 'media=[{"type": "document", "media": "attach://file1", "caption": "Отчет за '"${TODAY}"'"}, {"type": "document", "media": "attach://file2"}]' \
-            -F "file1=@data.csv" \
-            -F "file2=@data2.csv" \
+            -F 'media=[{"type": "document", "media": "attach://file1", "caption": "litres.csv — '"${TODAY}"'"}, {"type": "document", "media": "attach://file2", "caption": "livelib.csv — '"${TODAY}"'"}]' \
+            -F "file1=@litres.csv" \
+            -F "file2=@livelib.csv" \
             "https://api.telegram.org/bot${TGBOT_TOKEN}/sendMediaGroup" \
             || echo "::warning::Не удалось отправить файлы в Telegram — данные уже в Gist, некритично"
