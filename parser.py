@@ -141,7 +141,6 @@ def get_mybook_rating():
 mb_rating, mb_count, mb_status = get_mybook_rating()
 print(f"MyBook: rating={mb_rating}, count={mb_count}, status={mb_status}")
 
-
 # ============================================================
 # BOOKMIX
 # ============================================================
@@ -173,14 +172,47 @@ def bookmix_fetch(url, timeout=20, retries=3, delay=1.0):
     raise last_err
 
 
+def bookmix_num(s):
+    """'4.6' -> 4.6; '5.0' -> 5 (int); '0' -> 0; '4,25' -> 4.25."""
+    value = float(s.replace(",", "."))
+    return int(value) if value.is_integer() else value
+
+
 def bookmix_parse_rating(soup):
+    """
+    Рейтинг = «Общая оценка».
+
+    Сначала пробуем текст «Общая оценка (X.X)» — он однозначен.
+    Запасной путь — класс starN: N кодирует «целая часть + один знак
+    после запятой» (star46 → 4.6, star50 → 5, star05 → 0.5, star0 → 0).
+    """
     el = soup.find("div", id=re.compile(r"^ratingunit_long_static\d+$"))
     if not el:
         return None
+
+    # 1) Текст «Общая оценка (X.X)»
+    box = el.find_parent("div", class_="book-rating") or el.parent
+    if box:
+        for h6 in box.find_all("h6"):
+            text = h6.get_text(" ", strip=True)
+            if "Общая оценка" not in text:
+                continue
+            span = h6.find("span")
+            candidate = span.get_text() if span else text
+            m = re.search(r"\d+(?:[.,]\d+)?", candidate)
+            if m:
+                return bookmix_num(m.group())
+
+    # 2) Запасной путь: класс starN
     for cls in el.get("class", []):
         m = re.fullmatch(r"star(\d+)", cls)
-        if m:
-            return int(m.group(1))
+        if not m:
+            continue
+        digits = m.group(1)
+        n = int(digits)
+        if len(digits) == 1:          # star0 → 0, star5 → 5
+            return n
+        return bookmix_num(str(n / 10.0))   # star46 → 4.6, star05 → 0.5
     return None
 
 
@@ -200,15 +232,13 @@ def bookmix_count_from_link_text(a):
 
 
 def bookmix_parse_avg(raw):
+    """'пока нет' / пусто -> 0; '4.25' -> 4.25; '5' -> 5; '4,5' -> 4.5."""
     if raw is None:
         return 0
     raw = raw.strip()
     if not raw or not re.search(r"\d", raw):
         return 0
-    try:
-        return float(raw.replace(",", "."))
-    except ValueError:
-        return 0
+    return bookmix_num(raw)
 
 
 def bookmix_parse_section_avg(soup, header_prefix):
@@ -261,7 +291,6 @@ def get_bookmix_stats():
 
 bm = get_bookmix_stats()
 print(f"BookMix: status={bm['status']}, rating={bm['rating']}")
-
 
 # ============================================================
 # Запись в Gist-накопители
