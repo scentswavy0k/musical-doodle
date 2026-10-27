@@ -238,7 +238,10 @@ def bookmix_parse_avg(raw):
     raw = raw.strip()
     if not raw or not re.search(r"\d", raw):
         return 0
-    return bookmix_num(raw)
+    try:
+        return bookmix_num(raw)
+    except ValueError:
+        return 0
 
 
 def bookmix_parse_section_avg(soup, header_prefix):
