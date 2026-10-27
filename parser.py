@@ -5,10 +5,12 @@ import csv
 import re
 import io
 import os
+import time
 from datetime import datetime
 
 LITRES_URL = "https://www.litres.ru/book/edvard-monk/sneg-73795536/"
 MYBOOK_URL = "https://mybook.ru/author/edvard-monk/sneg-46/"
+BOOKMIX_URL = "https://bookmix.ru/book.phtml?id=4524133"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -24,20 +26,15 @@ def to_num(val):
     return float(val) if "." in str(val) else int(val)
 
 
-def fetch(url):
-    r = requests.get(url, headers=headers, timeout=15)
+def fetch(url, timeout=15):
+    r = requests.get(url, headers=headers, timeout=timeout)
     r.raise_for_status()
     return r
 
 
 # ============================================================
-# LITRES
+# LITRES + LIVELIB
 # ============================================================
-litres_resp = fetch(LITRES_URL)
-litres_soup = BeautifulSoup(litres_resp.content, "html.parser")
-litres_text = litres_resp.text
-
-
 def extract_value(key, text):
     m = re.search(rf'{key}[\\"\' ]*:[\\"\' ]*([\d.]+)', text)
     return m.group(1) if m else None
@@ -49,107 +46,228 @@ def extract_livelib_value(key, text):
     return m.group(1) if m else None
 
 
-rating_value = None
-price_raw = None
-for script in litres_soup.find_all("script", type="application/ld+json"):
+def get_litres_data():
+    """Парсит страницу Литрес. Возвращает dict с данными + статусами."""
+    result = {
+        "litres_status": None,
+        "livelib_status": None,
+        "price": "", "review_count": "", "rated_total": "",
+        "rating_value": "", "rated_avg": "",
+        "star_1": "", "star_2": "", "star_3": "", "star_4": "", "star_5": "",
+        "livelib_avg": "", "livelib_total": "",
+        "livelib_1": "", "livelib_2": "", "livelib_3": "",
+        "livelib_4": "", "livelib_5": "",
+    }
+
     try:
-        data = json.loads(script.string)
-    except (json.JSONDecodeError, TypeError):
-        continue
-    if data.get("@type") == "Book":
-        rating_value = data.get("aggregateRating", {}).get("ratingValue")
-        offers = data.get("offers", {})
-        if isinstance(offers, list) and offers:
-            offers = offers[0]
-        if isinstance(offers, dict):
-            price_raw = offers.get("price")
-        break
+        r = fetch(LITRES_URL)
+    except requests.RequestException as e:
+        print(f"[WARN] Litres request failed: {e}")
+        result["litres_status"] = "REQUEST_ERROR"
+        result["livelib_status"] = "REQUEST_ERROR"
+        return result
 
-price = to_num(str(price_raw)) if price_raw is not None else ""
+    soup = BeautifulSoup(r.content, "html.parser")
+    text = r.text
 
-reviews_count = to_num(extract_value("reviews_count", litres_text))
-star_1 = to_num(extract_value("rated_1_count", litres_text))
-star_2 = to_num(extract_value("rated_2_count", litres_text))
-star_3 = to_num(extract_value("rated_3_count", litres_text))
-star_4 = to_num(extract_value("rated_4_count", litres_text))
-star_5 = to_num(extract_value("rated_5_count", litres_text))
-rated_avg = to_num(extract_value("rated_avg", litres_text))
-rated_total = to_num(extract_value("rated_total_count", litres_text))
-
-livelib_avg = to_num(extract_value("livelib_rated_avg", litres_text))
-livelib_total = to_num(extract_value("livelib_rated_count", litres_text))
-livelib_1 = to_num(extract_livelib_value("rating_1_count", litres_text))
-livelib_2 = to_num(extract_livelib_value("rating_2_count", litres_text))
-livelib_3 = to_num(extract_livelib_value("rating_3_count", litres_text))
-livelib_4 = to_num(extract_livelib_value("rating_4_count", litres_text))
-livelib_5 = to_num(extract_livelib_value("rating_5_count", litres_text))
-
-
-# ============================================================
-# MYBOOK — три стратегии, как в вашем скрипте
-# ============================================================
-def mybook_from_json_ld(soup):
-    """Стратегия 1: schema.org aggregateRating."""
-    for s in soup.find_all("script", type="application/ld+json"):
+    # JSON-LD: rating + price
+    rating_value = None
+    price_raw = None
+    for script in soup.find_all("script", type="application/ld+json"):
         try:
-            data = json.loads(s.string or "")
+            data = json.loads(script.string)
         except (json.JSONDecodeError, TypeError):
             continue
-        for obj in (data if isinstance(data, list) else [data]):
-            ar = obj.get("aggregateRating") if isinstance(obj, dict) else None
-            if not ar:
-                continue
-            try:
-                rating = float(ar["ratingValue"])
-                count = int(ar.get("ratingCount") or ar.get("reviewCount"))
-                return rating, count
-            except (KeyError, TypeError, ValueError):
-                continue
-    return None, None
+        if data.get("@type") == "Book":
+            rating_value = data.get("aggregateRating", {}).get("ratingValue")
+            offers = data.get("offers", {})
+            if isinstance(offers, list) and offers:
+                offers = offers[0]
+            if isinstance(offers, dict):
+                price_raw = offers.get("price")
+            break
+
+    result["rating_value"] = rating_value if rating_value is not None else ""
+    result["price"] = to_num(str(price_raw)) if price_raw is not None else ""
+    result["review_count"] = to_num(extract_value("reviews_count", text))
+    result["star_1"] = to_num(extract_value("rated_1_count", text))
+    result["star_2"] = to_num(extract_value("rated_2_count", text))
+    result["star_3"] = to_num(extract_value("rated_3_count", text))
+    result["star_4"] = to_num(extract_value("rated_4_count", text))
+    result["star_5"] = to_num(extract_value("rated_5_count", text))
+    result["rated_avg"] = to_num(extract_value("rated_avg", text))
+    result["rated_total"] = to_num(extract_value("rated_total_count", text))
+
+    result["livelib_avg"] = to_num(extract_value("livelib_rated_avg", text))
+    result["livelib_total"] = to_num(extract_value("livelib_rated_count", text))
+    result["livelib_1"] = to_num(extract_livelib_value("rating_1_count", text))
+    result["livelib_2"] = to_num(extract_livelib_value("rating_2_count", text))
+    result["livelib_3"] = to_num(extract_livelib_value("rating_3_count", text))
+    result["livelib_4"] = to_num(extract_livelib_value("rating_4_count", text))
+    result["livelib_5"] = to_num(extract_livelib_value("rating_5_count", text))
+
+    result["litres_status"] = "OK" if result["rating_value"] != "" else "PARSE_ERROR"
+    result["livelib_status"] = "OK" if result["livelib_avg"] != "" else "PARSE_ERROR"
+
+    return result
 
 
-def mybook_from_text(soup):
-    """Стратегия 2: '5 (2 оценки)' в видимом тексте."""
-    text = soup.get_text(" ", strip=True)
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*\(\s*(\d+)\s*оценк", text)
-    if m:
-        return float(m.group(1).replace(",", ".")), int(m.group(2))
-    m = re.search(r"(\d+)\s*оценк", text)
-    count = int(m.group(1)) if m else None
-    return None, count
+lit = get_litres_data()
+print(f"Litres: status={lit['litres_status']}")
+print(f"LiveLib: status={lit['livelib_status']}")
 
 
-def mybook_from_star(soup):
-    """Стратегия 3: звезда 16×16 → ближайший <b> с числом."""
-    star = soup.find("svg", attrs={"viewBox": "0 0 16 16"})
-    if not star:
-        return None
-    b = star.find_next("b")
-    if not b:
-        return None
-    m = re.search(r"\d+(?:[.,]\d+)?", b.get_text())
-    return float(m.group().replace(",", ".")) if m else None
+# ============================================================
+# MYBOOK
+# ============================================================
+MYBOOK_RATING_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*\(\s*(\d+)\s*оценк")
 
 
 def get_mybook_rating():
-    r = fetch(MYBOOK_URL)
-    soup_mb = BeautifulSoup(r.text, "html.parser")
-    rating, count = mybook_from_json_ld(soup_mb)
-    if rating is None:
-        rating, count2 = mybook_from_text(soup_mb)
-        count = count or count2
-    if rating is None:
-        rating = mybook_from_star(soup_mb)
-    return rating, count
+    """Возвращает (rating, count, status). При сбое — (0, 0, <причина>)."""
+    try:
+        r = fetch(MYBOOK_URL)
+    except requests.RequestException as e:
+        print(f"[WARN] MyBook request failed: {e}")
+        return 0, 0, "REQUEST_ERROR"
+
+    text = BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)
+    m = MYBOOK_RATING_RE.search(text)
+    if not m:
+        return 0, 0, "PARSE_ERROR"
+
+    return float(m.group(1).replace(",", ".")), int(m.group(2)), "OK"
 
 
-# MyBook не должен ломать весь workflow — оборачиваем в try/except
-try:
-    mb_rating, mb_count = get_mybook_rating()
-    print(f"MyBook: rating={mb_rating}, count={mb_count}")
-except Exception as e:
-    print(f"[WARN] MyBook parsing failed: {e}")
-    mb_rating, mb_count = None, None
+mb_rating, mb_count, mb_status = get_mybook_rating()
+print(f"MyBook: rating={mb_rating}, count={mb_count}, status={mb_status}")
+
+
+# ============================================================
+# BOOKMIX
+# ============================================================
+BOOKMIX_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+}
+
+
+def bookmix_fetch(url, timeout=20, retries=3, delay=1.0):
+    last_err = None
+    with requests.Session() as session:
+        for attempt in range(1, retries + 1):
+            try:
+                r = session.get(url, headers=BOOKMIX_HEADERS, timeout=timeout)
+                if r.status_code == 200:
+                    if not r.encoding:
+                        r.encoding = "utf-8"
+                    return r.text
+                last_err = RuntimeError(f"HTTP {r.status_code} для {url}")
+            except requests.RequestException as exc:
+                last_err = exc
+            time.sleep(delay * attempt)
+    raise last_err
+
+
+def bookmix_parse_rating(soup):
+    el = soup.find("div", id=re.compile(r"^ratingunit_long_static\d+$"))
+    if not el:
+        return None
+    for cls in el.get("class", []):
+        m = re.fullmatch(r"star(\d+)", cls)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def bookmix_count_by_onclick(soup, func_name):
+    a = soup.find("a", onclick=re.compile(rf"\b{func_name}\b"))
+    if a is None:
+        return None
+    m = re.search(r"\d+", a.get_text() or "")
+    return int(m.group()) if m else None
+
+
+def bookmix_count_from_link_text(a):
+    if a is None:
+        return None
+    m = re.search(r"\((\d+)\)", a.get_text() or "")
+    return int(m.group(1)) if m else None
+
+
+def bookmix_parse_avg(raw):
+    if raw is None:
+        return 0
+    raw = raw.strip()
+    if not raw or not re.search(r"\d", raw):
+        return 0
+    try:
+        return float(raw.replace(",", "."))
+    except ValueError:
+        return 0
+
+
+def bookmix_parse_section_avg(soup, header_prefix):
+    h2 = soup.find("h2", string=re.compile(rf"^{header_prefix}"))
+    if not h2:
+        return 0
+    box = h2.find_next("div", class_="average-grade")
+    if not box:
+        return 0
+    count_el = box.select_one(".count")
+    return bookmix_parse_avg(count_el.get_text() if count_el else None)
+
+
+def bookmix_parse_counters(soup):
+    return {
+        "reviews": bookmix_count_from_link_text(soup.find("a", id="allreviewslink")),
+        "discussions": bookmix_count_from_link_text(
+            soup.find("a", href=re.compile(r"^/discussion\.phtml"))
+        ),
+        "read": bookmix_count_by_onclick(soup, "getwhoreadbybook"),
+        "want_to_read": bookmix_count_by_onclick(soup, "getwhowanttoreadbybook"),
+    }
+
+
+def get_bookmix_stats():
+    try:
+        html = bookmix_fetch(BOOKMIX_URL)
+    except Exception as e:
+        print(f"[WARN] BookMix request failed: {e}")
+        return {
+            "reviews": None, "reviews_avg": None,
+            "discussions": None, "discussions_avg": None,
+            "rating": None, "overall_rating": None,
+            "read": None, "want_to_read": None,
+            "status": "REQUEST_ERROR",
+        }
+
+    soup_bm = BeautifulSoup(html, "html.parser")
+    rating = bookmix_parse_rating(soup_bm)
+    counters = bookmix_parse_counters(soup_bm)
+    reviews_avg = bookmix_parse_section_avg(soup_bm, "Рецензии на книгу")
+    discussions_avg = bookmix_parse_section_avg(soup_bm, "Отзывы на книгу")
+
+    return {
+        "reviews": counters["reviews"],
+        "reviews_avg": reviews_avg,
+        "discussions": counters["discussions"],
+        "discussions_avg": discussions_avg,
+        "rating": rating,
+        "overall_rating": rating,
+        "read": counters["read"],
+        "want_to_read": counters["want_to_read"],
+        "status": "OK" if rating is not None else "PARSE_ERROR",
+    }
+
+
+bm = get_bookmix_stats()
+print(f"BookMix: status={bm['status']}, {bm}")
 
 
 # ============================================================
@@ -193,32 +311,47 @@ def append_or_replace(local_path, header, new_row, gist_id, filename, token):
 GIST_TOKEN = os.environ.get("GIST_TOKEN", "")
 GIST_ID = os.environ.get("GIST_ID", "")
 
+
+def cell(v):
+    return "" if v is None else v
+
+
 # litres.csv
-header1 = ["datetime", "price", "review_count",
-           "rated_total", "rating_value", "rated_avg",
-           "1_star", "2_star", "3_star", "4_star", "5_star"]
-row1 = [today, price, reviews_count,
-        rated_total, rating_value if rating_value is not None else "", rated_avg,
-        star_1, star_2, star_3, star_4, star_5]
+header1 = ["datetime", "price", "review_count", "rated_total",
+           "rating_value", "rated_avg",
+           "1_star", "2_star", "3_star", "4_star", "5_star", "status"]
+row1 = [today, lit["price"], lit["review_count"], lit["rated_total"],
+        lit["rating_value"], lit["rated_avg"],
+        lit["star_1"], lit["star_2"], lit["star_3"], lit["star_4"], lit["star_5"],
+        lit["litres_status"]]
 append_or_replace("litres.csv", header1, row1, GIST_ID, "litres.csv", GIST_TOKEN)
 
 # livelib.csv
 header2 = ["datetime", "livelib_avg", "livelib_total",
-           "1_star", "2_star", "3_star", "4_star", "5_star"]
-row2 = [today, livelib_avg, livelib_total,
-        livelib_1, livelib_2, livelib_3, livelib_4, livelib_5]
+           "1_star", "2_star", "3_star", "4_star", "5_star", "status"]
+row2 = [today, lit["livelib_avg"], lit["livelib_total"],
+        lit["livelib_1"], lit["livelib_2"], lit["livelib_3"],
+        lit["livelib_4"], lit["livelib_5"], lit["livelib_status"]]
 append_or_replace("livelib.csv", header2, row2, GIST_ID, "livelib.csv", GIST_TOKEN)
 
 # mybook.csv
-header3 = ["datetime", "rating_value", "rated_total"]
-row3 = [today,
-        mb_rating if mb_rating is not None else "",
-        mb_count if mb_count is not None else ""]
+header3 = ["datetime", "rating_value", "rated_total", "status"]
+row3 = [today, mb_rating, mb_count, mb_status]
 append_or_replace("mybook.csv", header3, row3, GIST_ID, "mybook.csv", GIST_TOKEN)
 
-print(f"litres.csv: {today}, price={price}, reviews={reviews_count}, "
-      f"rated_total={rated_total}, rating={rating_value}, rated_avg={rated_avg}, "
-      f"stars=({star_1},{star_2},{star_3},{star_4},{star_5})")
-print(f"livelib.csv: {today}, avg={livelib_avg}, total={livelib_total}, "
-      f"stars=({livelib_1},{livelib_2},{livelib_3},{livelib_4},{livelib_5})")
-print(f"mybook.csv: {today}, rating={mb_rating}, count={mb_count}")
+# bookmix.csv
+header4 = ["datetime", "reviews", "reviews_avg", "discussions", "discussions_avg",
+           "rating", "overall_rating", "read", "want_to_read", "status"]
+row4 = [today, cell(bm["reviews"]), cell(bm["reviews_avg"]),
+        cell(bm["discussions"]), cell(bm["discussions_avg"]),
+        cell(bm["rating"]), cell(bm["overall_rating"]),
+        cell(bm["read"]), cell(bm["want_to_read"]), bm["status"]]
+append_or_replace("bookmix.csv", header4, row4, GIST_ID, "bookmix.csv", GIST_TOKEN)
+
+print(f"litres.csv: {today}, status={lit['litres_status']}, "
+      f"price={lit['price']}, rating={lit['rating_value']}")
+print(f"livelib.csv: {today}, status={lit['livelib_status']}, "
+      f"avg={lit['livelib_avg']}, total={lit['livelib_total']}")
+print(f"mybook.csv: {today}, status={mb_status}, "
+      f"rating={mb_rating}, count={mb_count}")
+print(f"bookmix.csv: {today}, status={bm['status']}, rating={bm['rating']}")
