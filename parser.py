@@ -21,9 +21,16 @@ today = datetime.utcnow().strftime("%Y-%m-%d")
 
 
 def to_num(val):
+    """Приводит строку/число к int или float; запятую трактует как точку."""
     if val is None:
         return ""
-    return float(val) if "." in str(val) else int(val)
+    s = str(val).replace(",", ".").strip()
+    if not s:
+        return ""
+    try:
+        return float(s) if "." in s else int(s)
+    except ValueError:
+        return ""
 
 
 def fetch(url, timeout=15):
@@ -35,36 +42,28 @@ def fetch(url, timeout=15):
 # ============================================================
 # LITRES + LIVELIB
 # ============================================================
-def extract_value(key, text):
-    m = re.search(rf'{key}[\\"\' ]*:[\\"\' ]*([\d.]+)', text)
-    return m.group(1) if m else None
-
-
-def extract_livelib_value(key, text):
-    pattern = rf'livelib_ratings[\\"\' ]*:[\\"\' ]*\{{[^}}]*?{key}[\\"\' ]*:[\\"\' ]*([\d.]+)'
-    m = re.search(pattern, text)
+def extract_value(key, text, nested=False):
+    prefix = r'livelib_ratings[\\"\' ]*:[\\"\' ]*\{{[^}}]*?' if nested else ''
+    m = re.search(rf'{prefix}{key}[\\"\' ]*:[\\"\' ]*([\d.]+)', text)
     return m.group(1) if m else None
 
 
 def get_litres_data():
     """Парсит страницу Литрес. Возвращает dict с данными + статусами."""
-    result = {
-        "litres_status": None,
-        "livelib_status": None,
-        "price": "", "review_count": "", "rated_total": "",
-        "rating_value": "", "rated_avg": "",
-        "star_1": "", "star_2": "", "star_3": "", "star_4": "", "star_5": "",
-        "livelib_avg": "", "livelib_total": "",
-        "livelib_1": "", "livelib_2": "", "livelib_3": "",
-        "livelib_4": "", "livelib_5": "",
-    }
+    keys = [
+        "price", "review_count", "rated_total", "rating_value", "rated_avg",
+        "star_1", "star_2", "star_3", "star_4", "star_5",
+        "livelib_avg", "livelib_total",
+        "livelib_1", "livelib_2", "livelib_3", "livelib_4", "livelib_5",
+    ]
+    result = {k: "" for k in keys}
+    result["litres_status"] = "REQUEST_ERROR"
+    result["livelib_status"] = "REQUEST_ERROR"
 
     try:
         r = fetch(LITRES_URL)
     except requests.RequestException as e:
         print(f"[WARN] Litres request failed: {e}")
-        result["litres_status"] = "REQUEST_ERROR"
-        result["livelib_status"] = "REQUEST_ERROR"
         return result
 
     soup = BeautifulSoup(r.content, "html.parser")
@@ -100,11 +99,11 @@ def get_litres_data():
 
     result["livelib_avg"] = to_num(extract_value("livelib_rated_avg", text))
     result["livelib_total"] = to_num(extract_value("livelib_rated_count", text))
-    result["livelib_1"] = to_num(extract_livelib_value("rating_1_count", text))
-    result["livelib_2"] = to_num(extract_livelib_value("rating_2_count", text))
-    result["livelib_3"] = to_num(extract_livelib_value("rating_3_count", text))
-    result["livelib_4"] = to_num(extract_livelib_value("rating_4_count", text))
-    result["livelib_5"] = to_num(extract_livelib_value("rating_5_count", text))
+    result["livelib_1"] = to_num(extract_value("rating_1_count", text, nested=True))
+    result["livelib_2"] = to_num(extract_value("rating_2_count", text, nested=True))
+    result["livelib_3"] = to_num(extract_value("rating_3_count", text, nested=True))
+    result["livelib_4"] = to_num(extract_value("rating_4_count", text, nested=True))
+    result["livelib_5"] = to_num(extract_value("rating_5_count", text, nested=True))
 
     result["litres_status"] = "OK" if result["rating_value"] != "" else "PARSE_ERROR"
     result["livelib_status"] = "OK" if result["livelib_avg"] != "" else "PARSE_ERROR"
@@ -249,25 +248,19 @@ def get_bookmix_stats():
 
     soup_bm = BeautifulSoup(html, "html.parser")
     rating = bookmix_parse_rating(soup_bm)
-    counters = bookmix_parse_counters(soup_bm)
-    reviews_avg = bookmix_parse_section_avg(soup_bm, "Рецензии на книгу")
-    discussions_avg = bookmix_parse_section_avg(soup_bm, "Отзывы на книгу")
 
     return {
-        "reviews": counters["reviews"],
-        "reviews_avg": reviews_avg,
-        "discussions": counters["discussions"],
-        "discussions_avg": discussions_avg,
+        **bookmix_parse_counters(soup_bm),
+        "reviews_avg": bookmix_parse_section_avg(soup_bm, "Рецензии на книгу"),
+        "discussions_avg": bookmix_parse_section_avg(soup_bm, "Отзывы на книгу"),
         "rating": rating,
         "overall_rating": rating,
-        "read": counters["read"],
-        "want_to_read": counters["want_to_read"],
         "status": "OK" if rating is not None else "PARSE_ERROR",
     }
 
 
 bm = get_bookmix_stats()
-print(f"BookMix: status={bm['status']}, {bm}")
+print(f"BookMix: status={bm['status']}, rating={bm['rating']}")
 
 
 # ============================================================
@@ -311,47 +304,40 @@ def append_or_replace(local_path, header, new_row, gist_id, filename, token):
 GIST_TOKEN = os.environ.get("GIST_TOKEN", "")
 GIST_ID = os.environ.get("GIST_ID", "")
 
+REPORTS = [
+    (
+        "litres.csv",
+        ["datetime", "price", "review_count", "rated_total",
+         "rating_value", "rated_avg",
+         "1_star", "2_star", "3_star", "4_star", "5_star", "status"],
+        [today, lit["price"], lit["review_count"], lit["rated_total"],
+         lit["rating_value"], lit["rated_avg"],
+         lit["star_1"], lit["star_2"], lit["star_3"], lit["star_4"], lit["star_5"],
+         lit["litres_status"]],
+    ),
+    (
+        "livelib.csv",
+        ["datetime", "livelib_avg", "livelib_total",
+         "1_star", "2_star", "3_star", "4_star", "5_star", "status"],
+        [today, lit["livelib_avg"], lit["livelib_total"],
+         lit["livelib_1"], lit["livelib_2"], lit["livelib_3"],
+         lit["livelib_4"], lit["livelib_5"], lit["livelib_status"]],
+    ),
+    (
+        "mybook.csv",
+        ["datetime", "rating_value", "rated_total", "status"],
+        [today, mb_rating, mb_count, mb_status],
+    ),
+    (
+        "bookmix.csv",
+        ["datetime", "reviews", "reviews_avg", "discussions", "discussions_avg",
+         "rating", "overall_rating", "read", "want_to_read", "status"],
+        [today, bm["reviews"], bm["reviews_avg"],
+         bm["discussions"], bm["discussions_avg"],
+         bm["rating"], bm["overall_rating"],
+         bm["read"], bm["want_to_read"], bm["status"]],
+    ),
+]
 
-def cell(v):
-    return "" if v is None else v
-
-
-# litres.csv
-header1 = ["datetime", "price", "review_count", "rated_total",
-           "rating_value", "rated_avg",
-           "1_star", "2_star", "3_star", "4_star", "5_star", "status"]
-row1 = [today, lit["price"], lit["review_count"], lit["rated_total"],
-        lit["rating_value"], lit["rated_avg"],
-        lit["star_1"], lit["star_2"], lit["star_3"], lit["star_4"], lit["star_5"],
-        lit["litres_status"]]
-append_or_replace("litres.csv", header1, row1, GIST_ID, "litres.csv", GIST_TOKEN)
-
-# livelib.csv
-header2 = ["datetime", "livelib_avg", "livelib_total",
-           "1_star", "2_star", "3_star", "4_star", "5_star", "status"]
-row2 = [today, lit["livelib_avg"], lit["livelib_total"],
-        lit["livelib_1"], lit["livelib_2"], lit["livelib_3"],
-        lit["livelib_4"], lit["livelib_5"], lit["livelib_status"]]
-append_or_replace("livelib.csv", header2, row2, GIST_ID, "livelib.csv", GIST_TOKEN)
-
-# mybook.csv
-header3 = ["datetime", "rating_value", "rated_total", "status"]
-row3 = [today, mb_rating, mb_count, mb_status]
-append_or_replace("mybook.csv", header3, row3, GIST_ID, "mybook.csv", GIST_TOKEN)
-
-# bookmix.csv
-header4 = ["datetime", "reviews", "reviews_avg", "discussions", "discussions_avg",
-           "rating", "overall_rating", "read", "want_to_read", "status"]
-row4 = [today, cell(bm["reviews"]), cell(bm["reviews_avg"]),
-        cell(bm["discussions"]), cell(bm["discussions_avg"]),
-        cell(bm["rating"]), cell(bm["overall_rating"]),
-        cell(bm["read"]), cell(bm["want_to_read"]), bm["status"]]
-append_or_replace("bookmix.csv", header4, row4, GIST_ID, "bookmix.csv", GIST_TOKEN)
-
-print(f"litres.csv: {today}, status={lit['litres_status']}, "
-      f"price={lit['price']}, rating={lit['rating_value']}")
-print(f"livelib.csv: {today}, status={lit['livelib_status']}, "
-      f"avg={lit['livelib_avg']}, total={lit['livelib_total']}")
-print(f"mybook.csv: {today}, status={mb_status}, "
-      f"rating={mb_rating}, count={mb_count}")
-print(f"bookmix.csv: {today}, status={bm['status']}, rating={bm['rating']}")
+for filename, header, row in REPORTS:
+    append_or_replace(filename, header, row, GIST_ID, filename, GIST_TOKEN)
