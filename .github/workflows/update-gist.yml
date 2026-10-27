@@ -50,7 +50,12 @@ jobs:
           TGBOT_CHATID: ${{ secrets.TGBOT_CHATID }}
           TGBOT_THREAD: ${{ secrets.TGBOT_THREAD }}
         run: |
-          TODAY=$(date -u '+%Y-%m-%d')
+          DATE_UTC=$(date -u '+%Y_%m_%d')
+          LITRES_NAME="${DATE_UTC}_litres.csv"
+          LIVELIB_NAME="${DATE_UTC}_livelib.csv"
+
+          cp litres.csv  "${LITRES_NAME}"
+          cp livelib.csv "${LIVELIB_NAME}"
 
           THREAD_OPT=()
           if [ -n "${TGBOT_THREAD}" ]; then
@@ -60,8 +65,8 @@ jobs:
           curl --fail-with-body -sS \
             -F "chat_id=${TGBOT_CHATID}" \
             "${THREAD_OPT[@]}" \
-            -F 'media=[{"type": "document", "media": "attach://file1", "caption": "litres.csv — '"${TODAY}"'"}, {"type": "document", "media": "attach://file2", "caption": "livelib.csv — '"${TODAY}"'"}]' \
-            -F "file1=@litres.csv" \
-            -F "file2=@livelib.csv" \
+            -F 'media=[{"type": "document", "media": "attach://file1", "caption": "'"${LITRES_NAME}"'"}, {"type": "document", "media": "attach://file2", "caption": "'"${LIVELIB_NAME}"'"}]' \
+            -F "file1=@${LITRES_NAME}" \
+            -F "file2=@${LIVELIB_NAME}" \
             "https://api.telegram.org/bot${TGBOT_TOKEN}/sendMediaGroup" \
             || echo "::warning::Не удалось отправить файлы в Telegram — данные уже в Gist, некритично"
