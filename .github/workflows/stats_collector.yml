@@ -1,4 +1,4 @@
-name: Update Daily Gist
+name: Stats Collector
 
 on:
   schedule:
